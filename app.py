@@ -3,26 +3,15 @@ import os
 import random
 import sys
 import time
+import importlib
 from typing import List, Optional
 from io import BytesIO
 
 import cv2
-import kagglehub
 import numpy as np
 import streamlit as st
 from PIL import Image, ImageEnhance, ImageFilter
 from rembg import remove
-
-TF_IMPORT_ERROR = None
-try:
-    from tensorflow.keras.applications.resnet50 import ResNet50, decode_predictions, preprocess_input
-    from tensorflow.keras.preprocessing import image
-except ModuleNotFoundError as exc:
-    TF_IMPORT_ERROR = exc
-    ResNet50 = None
-    decode_predictions = None
-    preprocess_input = None
-    image = None
 
 st.set_page_config(page_title="Travel Setu AI Lab", page_icon="🌌", layout="wide")
 
@@ -50,6 +39,8 @@ ARCHITECTURE_DB = {
     "sun temple konark": {"summary": "Konark Sun Temple is a masterwork of Kalinga architecture, conceived as Surya's stone chariot.", "style": "Kalinga Temple", "era": "13th century", "influence": "Solar symbolism and Odishan temple design", "region": "Odisha"},
     "taj mahal": {"summary": "The Taj Mahal is a globally recognized Mughal mausoleum prized for its symmetry, marble inlay, and refined proportions.", "style": "Mughal Mausoleum", "era": "17th century", "influence": "Persian, Timurid, and Mughal funerary architecture", "region": "Uttar Pradesh"},
 }
+
+DEFAULT_MONUMENTS = sorted(ARCHITECTURE_DB.keys())
 
 
 def inject_css() -> None:
@@ -102,22 +93,29 @@ def inject_css() -> None:
 
 @st.cache_resource
 def load_model():
-    if ResNet50 is None:
-        raise RuntimeError("TensorFlow is not available in the current Streamlit runtime.")
-    return ResNet50(weights="imagenet")
+    tf_modules = get_tensorflow_modules()
+    return tf_modules["ResNet50"](weights="imagenet")
 
 
-def tensorflow_available() -> bool:
-    return TF_IMPORT_ERROR is None and ResNet50 is not None
+@st.cache_resource(show_spinner=False)
+def get_tensorflow_modules():
+    resnet50 = importlib.import_module("tensorflow.keras.applications.resnet50")
+    preprocessing = importlib.import_module("tensorflow.keras.preprocessing.image")
+    return {
+        "ResNet50": resnet50.ResNet50,
+        "decode_predictions": resnet50.decode_predictions,
+        "preprocess_input": resnet50.preprocess_input,
+        "image": preprocessing,
+    }
 
 
-def render_tensorflow_warning() -> None:
+def render_tensorflow_warning(error: Exception) -> None:
     st.error("TensorFlow is unavailable in the current Streamlit process, so the Architecture Analyzer is disabled.")
     st.code(
         "\n".join(
             [
                 f"Python executable: {sys.executable}",
-                f"Import error: {TF_IMPORT_ERROR}",
+                f"Import error: {error}",
                 "Restart with: .\\venv\\Scripts\\streamlit.exe run app.py",
             ]
         ),
@@ -127,10 +125,15 @@ def render_tensorflow_warning() -> None:
 
 @st.cache_resource(show_spinner=False)
 def resolve_dataset_path() -> Optional[str]:
-    candidate_paths = [LOCAL_DATASET_PATH]
-    for candidate in candidate_paths:
-        if os.path.isdir(candidate):
-            return candidate
+    if os.path.isdir(LOCAL_DATASET_PATH):
+        return LOCAL_DATASET_PATH
+
+    # Avoid slow startup on Streamlit Cloud unless dataset download is explicitly enabled.
+    allow_kaggle_download = os.getenv("ENABLE_KAGGLE_DATASET_DOWNLOAD", "").lower() in {"1", "true", "yes"}
+    if not allow_kaggle_download:
+        return None
+
+    kagglehub = importlib.import_module("kagglehub")
 
     for dataset_ref in KAGGLE_DATASETS:
         try:
@@ -168,7 +171,7 @@ def get_monuments():
             item_path = os.path.join(dataset_path, item)
             if os.path.isdir(item_path):
                 monuments.append(item)
-    return sorted(monuments) if monuments else ["ajanta caves", "ellora caves"]
+    return sorted(monuments) if monuments else DEFAULT_MONUMENTS
 
 
 def format_monument_name(name: str) -> str:
@@ -242,14 +245,13 @@ def infer_architecture_details(class_name: str, confidence: float):
 
 
 def analyze_architecture(uploaded_file):
-    if not tensorflow_available():
-        raise RuntimeError("TensorFlow is unavailable in the current Streamlit runtime.")
+    tf_modules = get_tensorflow_modules()
     img = open_uploaded_image(uploaded_file).convert("RGB")
-    img_array = image.img_to_array(img.resize((224, 224)))
+    img_array = tf_modules["image"].img_to_array(img.resize((224, 224)))
     img_array = np.expand_dims(img_array, 0)
-    img_array = preprocess_input(img_array)
+    img_array = tf_modules["preprocess_input"](img_array)
     predictions = load_model().predict(img_array, verbose=0)
-    top_labels = decode_predictions(predictions, top=5)[0]
+    top_labels = tf_modules["decode_predictions"](predictions, top=5)[0]
     details = infer_architecture_details(top_labels[0][1], top_labels[0][2])
     return img, details, top_labels
 
@@ -366,7 +368,7 @@ def render_preview_card(title: str, copy: str) -> None:
 
 
 def render_sidebar() -> str:
-    dataset_path = resolve_dataset_path()
+    dataset_path = LOCAL_DATASET_PATH if os.path.isdir(LOCAL_DATASET_PATH) else None
     with st.sidebar:
         st.markdown(
             """
@@ -392,10 +394,9 @@ def render_sidebar() -> str:
             unsafe_allow_html=True,
         )
         if dataset_path:
-            source_label = "Local dataset" if os.path.isdir(LOCAL_DATASET_PATH) else "Kaggle cache"
-            st.caption(f"Dataset source: {source_label}")
+            st.caption("Dataset source: Local dataset")
         else:
-            st.caption("Dataset source unavailable. Configure Kaggle credentials or add a local dataset folder.")
+            st.caption("Dataset source unavailable. Upload a custom location image for the fastest experience.")
     return page
 
 
@@ -480,10 +481,6 @@ def render_architecture_analyzer() -> None:
         "Inspect a landmark image and surface structured visual intelligence in a cleaner dashboard report.",
     )
 
-    if not tensorflow_available():
-        render_tensorflow_warning()
-        return
-
     left_col, right_col = st.columns([1.1, 1.4])
     with left_col:
         render_preview_card("📸 Landmark Upload", "Drop a building, temple, palace, or monument image to run the recognition pipeline.")
@@ -501,10 +498,16 @@ def render_architecture_analyzer() -> None:
             with st.spinner("Analyzing... Processing AI Model..."):
                 st.markdown('<div class="loader-shell">Analyzing...<br>Processing AI Model...</div>', unsafe_allow_html=True)
                 time.sleep(0.2)
-                image_preview, details, top_labels = analyze_architecture(uploaded_file)
-                st.session_state["analysis_preview"] = image_preview
-                st.session_state["analysis_details"] = details
-                st.session_state["analysis_top_labels"] = top_labels
+                try:
+                    image_preview, details, top_labels = analyze_architecture(uploaded_file)
+                except Exception as exc:
+                    render_tensorflow_warning(exc)
+                    st.session_state["analysis_details"] = None
+                    st.session_state["analysis_top_labels"] = []
+                else:
+                    st.session_state["analysis_preview"] = image_preview
+                    st.session_state["analysis_details"] = details
+                    st.session_state["analysis_top_labels"] = top_labels
 
     details = st.session_state.get("analysis_details")
     top_labels = st.session_state.get("analysis_top_labels", [])
