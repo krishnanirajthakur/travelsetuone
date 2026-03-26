@@ -7,11 +7,9 @@ import importlib
 from typing import List, Optional
 from io import BytesIO
 
-import cv2
 import numpy as np
 import streamlit as st
 from PIL import Image, ImageEnhance, ImageFilter
-from rembg import remove
 
 st.set_page_config(page_title="Travel Setu AI Lab", page_icon="🌌", layout="wide")
 
@@ -98,6 +96,11 @@ def load_model():
 
 
 @st.cache_resource(show_spinner=False)
+def get_cv2():
+    return importlib.import_module("cv2")
+
+
+@st.cache_resource(show_spinner=False)
 def get_tensorflow_modules():
     resnet50 = importlib.import_module("tensorflow.keras.applications.resnet50")
     preprocessing = importlib.import_module("tensorflow.keras.preprocessing.image")
@@ -121,6 +124,11 @@ def render_tensorflow_warning(error: Exception) -> None:
         ),
         language="text",
     )
+
+
+@st.cache_resource(show_spinner=False)
+def get_rembg_remove():
+    return importlib.import_module("rembg").remove
 
 
 @st.cache_resource(show_spinner=False)
@@ -257,6 +265,7 @@ def analyze_architecture(uploaded_file):
 
 
 def enhance_realism(subject: Image.Image, scene: Image.Image, strength: float = 0.7) -> Image.Image:
+    cv2 = get_cv2()
     subject_rgba = subject.convert("RGBA")
     subject_rgb = np.array(subject_rgba.convert("RGB"), dtype=np.uint8)
     scene_rgb = np.array(scene.convert("RGB"), dtype=np.uint8)
@@ -275,6 +284,7 @@ def enhance_realism(subject: Image.Image, scene: Image.Image, strength: float = 
 
 
 def photorealistic_darshan(fg_file, bg_img: Image.Image, scale=1.0, shadow=0.4, lighting=0.7) -> Image.Image:
+    remove = get_rembg_remove()
     fg_img = open_uploaded_image(fg_file).convert("RGBA")
     fg_no_bg = remove(fg_img)
     if not isinstance(fg_no_bg, Image.Image):
