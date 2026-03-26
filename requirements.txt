@@ -5,4 +5,8 @@ numpy
 kagglehub
 tensorflow
 tf-keras-vis
+opencv-python-headless
+scikit-learn
+matplotlib
+libgl1
 opencv-python
