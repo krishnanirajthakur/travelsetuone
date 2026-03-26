@@ -1,8 +1,8 @@
-streamlit==1.38.0
-rembg==2.0.62
-Pillow==10.4.0
-numpy==1.26.4
+streamlit
+rembg
+Pillow
+numpy
 kagglehub
-tensorflow==2.20.0
-tf-keras-vis==0.9.1
-opencv-python==4.10.0.84
+tensorflow
+tf-keras-vis
+opencv-python
