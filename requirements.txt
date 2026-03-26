@@ -3,6 +3,6 @@ rembg==2.0.62
 Pillow==10.4.0
 numpy==1.26.4
 kagglehub
-tensorflow==2.17.0
+tensorflow==2.20.0
 tf-keras-vis==0.9.1
 opencv-python==4.10.0.84

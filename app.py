@@ -1,6 +1,7 @@
 import glob
 import os
 import random
+import sys
 import time
 from typing import List, Optional
 from io import BytesIO
@@ -11,8 +12,17 @@ import numpy as np
 import streamlit as st
 from PIL import Image, ImageEnhance, ImageFilter
 from rembg import remove
-from tensorflow.keras.applications.resnet50 import ResNet50, decode_predictions, preprocess_input
-from tensorflow.keras.preprocessing import image
+
+TF_IMPORT_ERROR = None
+try:
+    from tensorflow.keras.applications.resnet50 import ResNet50, decode_predictions, preprocess_input
+    from tensorflow.keras.preprocessing import image
+except ModuleNotFoundError as exc:
+    TF_IMPORT_ERROR = exc
+    ResNet50 = None
+    decode_predictions = None
+    preprocess_input = None
+    image = None
 
 st.set_page_config(page_title="Travel Setu AI Lab", page_icon="🌌", layout="wide")
 
@@ -92,7 +102,27 @@ def inject_css() -> None:
 
 @st.cache_resource
 def load_model():
+    if ResNet50 is None:
+        raise RuntimeError("TensorFlow is not available in the current Streamlit runtime.")
     return ResNet50(weights="imagenet")
+
+
+def tensorflow_available() -> bool:
+    return TF_IMPORT_ERROR is None and ResNet50 is not None
+
+
+def render_tensorflow_warning() -> None:
+    st.error("TensorFlow is unavailable in the current Streamlit process, so the Architecture Analyzer is disabled.")
+    st.code(
+        "\n".join(
+            [
+                f"Python executable: {sys.executable}",
+                f"Import error: {TF_IMPORT_ERROR}",
+                "Restart with: .\\venv\\Scripts\\streamlit.exe run app.py",
+            ]
+        ),
+        language="text",
+    )
 
 
 @st.cache_resource(show_spinner=False)
@@ -212,6 +242,8 @@ def infer_architecture_details(class_name: str, confidence: float):
 
 
 def analyze_architecture(uploaded_file):
+    if not tensorflow_available():
+        raise RuntimeError("TensorFlow is unavailable in the current Streamlit runtime.")
     img = open_uploaded_image(uploaded_file).convert("RGB")
     img_array = image.img_to_array(img.resize((224, 224)))
     img_array = np.expand_dims(img_array, 0)
@@ -447,6 +479,10 @@ def render_architecture_analyzer() -> None:
         "Architecture Analyzer",
         "Inspect a landmark image and surface structured visual intelligence in a cleaner dashboard report.",
     )
+
+    if not tensorflow_available():
+        render_tensorflow_warning()
+        return
 
     left_col, right_col = st.columns([1.1, 1.4])
     with left_col:
